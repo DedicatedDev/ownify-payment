@@ -1,0 +1,37 @@
+#pragma version 5
+txn ApplicationID
+int 0
+==
+bnz main_l6
+txn OnCompletion
+int DeleteApplication
+==
+bnz main_l5
+txna ApplicationArgs 0
+byte "set admin"
+==
+bnz main_l4
+err
+main_l4:
+global CreatorAddress
+txn Sender
+==
+assert
+byte "admin"
+txna ApplicationArgs 1
+app_global_put
+int 1
+return
+main_l5:
+int 1
+return
+main_l6:
+txn NumAppArgs
+int 1
+==
+assert
+byte "admin"
+txna ApplicationArgs 0
+app_global_put
+int 1
+return

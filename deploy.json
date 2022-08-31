@@ -1,0 +1,13 @@
+{
+  "payment": {
+    "creator": "6NECO3J3PIUQLY6SKZYTKMVFS5SJDHJ6JRRWGJEDFXKQMLOWYI4ET272QA",
+    "txID": "GZF3NBL7JEYTSIMVWZ6QZ4JCEUESBNKKYT73YRQDUUBF5UUO36YA",
+    "confirmedRound": 23803812,
+    "appID": 107471689,
+    "applicationAccount": "6FI4HAU5HPHYIKSZH6QADD5M3CG543YU333ZSY52NINXMC5O4MSGYRV5EE",
+    "timestamp": 1661948261,
+    "deleted": false,
+    "approvalFile": "payment - approval.teal",
+    "clearFile": "payment - clear.teal"
+  }
+}
