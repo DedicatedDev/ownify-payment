@@ -103,8 +103,22 @@ def approval_program():
 
     program = Cond(
         [Txn.application_id() == Int(0), on_creation],
-        [Txn.on_completion() == OnComplete.DeleteApplication, Return(Int(1))],
-        [Txn.on_completion() == OnComplete.UpdateApplication, Approve()],
+        # Verifies delete or update transaction, approves it.
+        [
+            Or(
+                Txn.on_completion() == OnComplete.DeleteApplication,
+                Txn.on_completion() == OnComplete.UpdateApplication, 
+            ),
+            
+            Seq([
+                Assert(Txn.sender() == Global.creator_address()),
+                Approve()
+            ])
+        ],
+        # Verifies closeout transaction, approves it.
+        [Txn.on_completion() == OnComplete.CloseOut, Approve()],
+        # Verifies opt-in transaction, approves it.
+        [Txn.on_completion() == OnComplete.OptIn, Approve()],
         [Txn.application_args[0] == Bytes("nft_create"),nft_create],
         [Txn.application_args[0] == Bytes("nft_transfer"),nft_transfer],
         [Txn.application_args[0] == Bytes("set admin"), set_admin],
