@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "yarn algob compile --force",
-    "test": "yarn algob test",
+    "test": "yarn build && yarn algob test",
     "deploy": "yarn tsc && yarn algob deploy --force"
   },
   "devDependencies": {
