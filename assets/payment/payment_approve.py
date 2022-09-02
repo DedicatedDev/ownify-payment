@@ -12,7 +12,12 @@ def approval_program():
     #initialize
     on_creation = Seq(
         [
-            Assert(Txn.application_args.length() == Int(2)),
+            Assert(
+                And(
+                    Txn.application_args.length() == Int(2),
+                    Len(Txn.application_args[0]) == Int(32),
+                )
+            ),
             App.globalPut(Bytes("admin"), Txn.application_args[0]),
             App.globalPut(Bytes("fee"), Txn.application_args[1]),
             Approve()
@@ -40,7 +45,7 @@ def approval_program():
                 Global.group_size() == Int(3),
                 basic_checks(Gtxn[1]),
                 Gtxn[1].type_enum() == TxnType.Payment,
-                Gtxn[1].amount() == Int(App.globalGet(Bytes("fee"))),
+                Gtxn[1].amount() == atoi(App.globalGet(Bytes("fee"))),
                 Gtxn[1].receiver() == Global.current_application_address(),
                 basic_checks(Gtxn[2]),
                 Gtxn[2].type_enum() == TxnType.AssetTransfer
@@ -72,6 +77,7 @@ def approval_program():
             Assert(
                 And(
                     Global.creator_address() == Txn.sender(),
+                    Len(Txn.application_args[1]) == Int(32),
                     Txn.application_args.length() == Int(2),
                 )
             ),
@@ -80,16 +86,29 @@ def approval_program():
         ]
     )
 
+    #change admin of application
+    set_fee = Seq(
+        [
+            Assert(
+                And(
+                    Global.creator_address() == Txn.sender(),
+                    Txn.application_args.length() == Int(2),
+                    atoi(Txn.application_args[1]) > Int(0)
+                )
+            ),
+            App.globalPut(Bytes("fee"),Txn.application_args[1]),
+            Approve(),
+        ]
+    )
+
     program = Cond(
         [Txn.application_id() == Int(0), on_creation],
         [Txn.on_completion() == OnComplete.DeleteApplication, Return(Int(1))],
-        # [
-        #     Txn.on_completion() == OnComplete.UpdateApplication,
-        #     Return(1),
-        # ],
+        [Txn.on_completion() == OnComplete.UpdateApplication, Approve()],
         [Txn.application_args[0] == Bytes("nft_create"),nft_create],
         [Txn.application_args[0] == Bytes("nft_transfer"),nft_transfer],
         [Txn.application_args[0] == Bytes("set admin"), set_admin],
+        [Txn.application_args[0] == Bytes("set fee"), set_fee],
         [Txn.application_args[0] == Bytes("withdraw"), withdraw],
     )
 

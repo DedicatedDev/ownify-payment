@@ -1,0 +1,256 @@
+#pragma version 6
+txn ApplicationID
+int 0
+==
+bnz main_l16
+txn OnCompletion
+int DeleteApplication
+==
+bnz main_l15
+txn OnCompletion
+int UpdateApplication
+==
+bnz main_l14
+txna ApplicationArgs 0
+byte "nft_create"
+==
+bnz main_l13
+txna ApplicationArgs 0
+byte "nft_transfer"
+==
+bnz main_l12
+txna ApplicationArgs 0
+byte "set admin"
+==
+bnz main_l11
+txna ApplicationArgs 0
+byte "set fee"
+==
+bnz main_l10
+txna ApplicationArgs 0
+byte "withdraw"
+==
+bnz main_l9
+err
+main_l9:
+txn Sender
+byte "admin"
+app_global_get
+==
+assert
+txn NumAppArgs
+int 2
+==
+assert
+itxn_begin
+int pay
+itxn_field TypeEnum
+txna ApplicationArgs 1
+callsub atoi_2
+itxn_field Amount
+txn Sender
+itxn_field Receiver
+itxn_submit
+int 1
+return
+main_l10:
+global CreatorAddress
+txn Sender
+==
+txn NumAppArgs
+int 2
+==
+&&
+txna ApplicationArgs 1
+callsub atoi_2
+int 0
+>
+&&
+assert
+byte "fee"
+txna ApplicationArgs 1
+app_global_put
+int 1
+return
+main_l11:
+global CreatorAddress
+txn Sender
+==
+txna ApplicationArgs 1
+len
+int 32
+==
+&&
+txn NumAppArgs
+int 2
+==
+&&
+assert
+byte "admin"
+txna ApplicationArgs 1
+app_global_put
+int 1
+return
+main_l12:
+gtxn 0 NumAppArgs
+int 2
+==
+global GroupSize
+int 3
+==
+&&
+gtxn 1 RekeyTo
+global ZeroAddress
+==
+gtxn 1 CloseRemainderTo
+global ZeroAddress
+==
+&&
+gtxn 1 AssetCloseTo
+global ZeroAddress
+==
+&&
+&&
+gtxn 1 TypeEnum
+int pay
+==
+&&
+gtxn 1 Amount
+byte "fee"
+app_global_get
+callsub atoi_2
+==
+&&
+gtxn 1 Receiver
+global CurrentApplicationAddress
+==
+&&
+gtxn 2 RekeyTo
+global ZeroAddress
+==
+gtxn 2 CloseRemainderTo
+global ZeroAddress
+==
+&&
+gtxn 2 AssetCloseTo
+global ZeroAddress
+==
+&&
+&&
+gtxn 2 TypeEnum
+int axfer
+==
+&&
+assert
+int 1
+return
+main_l13:
+gtxn 0 NumAppArgs
+int 1
+==
+global GroupSize
+int 2
+==
+&&
+gtxn 1 RekeyTo
+global ZeroAddress
+==
+gtxn 1 CloseRemainderTo
+global ZeroAddress
+==
+&&
+gtxn 1 AssetCloseTo
+global ZeroAddress
+==
+&&
+&&
+gtxn 1 TypeEnum
+int acfg
+==
+&&
+assert
+int 1
+return
+main_l14:
+int 1
+return
+main_l15:
+int 1
+return
+main_l16:
+txn NumAppArgs
+int 2
+==
+txna ApplicationArgs 0
+len
+int 32
+==
+&&
+assert
+byte "admin"
+txna ApplicationArgs 0
+app_global_put
+byte "fee"
+txna ApplicationArgs 1
+app_global_put
+int 1
+return
+
+// ascii_to_int
+asciitoint_0:
+store 1
+load 1
+int 48
+>=
+assert
+load 1
+int 57
+<=
+assert
+load 1
+int 48
+-
+retsub
+
+// pow10
+pow10_1:
+store 2
+int 10
+load 2
+exp
+retsub
+
+// atoi
+atoi_2:
+store 0
+load 0
+len
+int 0
+>
+bnz atoi_2_l2
+int 0
+b atoi_2_l3
+atoi_2_l2:
+load 0
+int 0
+getbyte
+callsub asciitoint_0
+load 0
+len
+int 1
+-
+callsub pow10_1
+*
+load 0
+int 1
+load 0
+len
+substring3
+load 0
+swap
+callsub atoi_2
+swap
+store 0
++
+atoi_2_l3:
+retsub
