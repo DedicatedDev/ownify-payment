@@ -19,7 +19,7 @@ def approval_program():
                 )
             ),
             App.globalPut(Bytes("admin"), Txn.application_args[0]),
-            App.globalPut(Bytes("fee"), Txn.application_args[1]),
+            App.globalPut(Bytes("fee"), Btoi(Txn.application_args[1])),
             Approve()
         ]
     )
@@ -45,7 +45,7 @@ def approval_program():
                 Global.group_size() == Int(3),
                 basic_checks(Gtxn[1]),
                 Gtxn[1].type_enum() == TxnType.Payment,
-                Gtxn[1].amount() == atoi(App.globalGet(Bytes("fee"))),
+                Gtxn[1].amount() == App.globalGet(Bytes("fee")),
                 Gtxn[1].receiver() == Global.current_application_address(),
                 basic_checks(Gtxn[2]),
                 Gtxn[2].type_enum() == TxnType.AssetTransfer
@@ -55,15 +55,15 @@ def approval_program():
     ])
 
     #withdraw fee from application account. 
-    contract_admin = App.globalGet(Bytes("admin"))
+    #contract_admin = App.globalGet(Bytes("admin"))
     withdraw = Seq(
         [
-            Assert(Txn.sender() == contract_admin),
+            Assert(Txn.sender() == App.globalGet(Bytes("admin"))),
             Assert(Txn.application_args.length() == Int(2)),
             InnerTxnBuilder.Begin(),
             InnerTxnBuilder.SetFields({
                 TxnField.type_enum: TxnType.Payment,
-                TxnField.amount: atoi(Txn.application_args[1]),
+                TxnField.amount: Btoi(Txn.application_args[1]),
                 TxnField.receiver: Txn.sender()
             }),
             InnerTxnBuilder.Submit(),
@@ -93,10 +93,10 @@ def approval_program():
                 And(
                     Global.creator_address() == Txn.sender(),
                     Txn.application_args.length() == Int(2),
-                    atoi(Txn.application_args[1]) > Int(0)
+                    Btoi(Txn.application_args[1]) > Int(0)
                 )
             ),
-            App.globalPut(Bytes("fee"),Txn.application_args[1]),
+            App.globalPut(Bytes("fee"),Btoi(Txn.application_args[1])),
             Approve(),
         ]
     )
@@ -114,39 +114,6 @@ def approval_program():
 
     return program
 
-# Magic number to convert between ascii chars and integers
-_ascii_zero = 48
-_ascii_nine = _ascii_zero + 9
-ascii_zero = Int(_ascii_zero)
-ascii_nine = Int(_ascii_nine)
-
-
-@Subroutine(TealType.uint64)
-def ascii_to_int(arg):
-    """ascii_to_int converts the integer representing a character in ascii to the actual integer it represents
-    Args:
-        arg: uint64 in the range 48-57 that is to be converted to an integer
-    Returns:
-        uint64 that is the value the ascii character passed in represents
-    """
-    return Seq(Assert(arg >= ascii_zero), Assert(arg <= ascii_nine), arg - ascii_zero)
-
-@Subroutine(TealType.uint64)
-def pow10(x) -> Expr:
-    """
-    Returns 10^x, useful for things like total supply of an asset
-    """
-    return Exp(Int(10), x)
-
-@Subroutine(TealType.uint64)
-def atoi(a):
-    """atoi converts a byte string representing a number to the integer value it represents"""
-    return If(
-        Len(a) > Int(0),
-        (ascii_to_int(GetByte(a, Int(0))) * pow10(Len(a) - Int(1)))
-        + atoi(Substring(a, Int(1), Len(a))),
-        Int(0),
-    )
 
 
 if __name__ == "__main__":

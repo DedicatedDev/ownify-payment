@@ -1,11 +1,11 @@
 import { AccountStore, getProgram, Runtime } from "@algo-builder/runtime";
-import { getSuggestedParams, types } from "@algo-builder/web";
+import { getSuggestedParams, tx, types } from "@algo-builder/web";
 import { LogicSigAccount } from "algosdk";
 import { assert, expect } from "chai";
 import * as algob from "@algo-builder/algob";
 import { readFileSync } from "fs";
 import { StorageConfig } from "@algo-builder/web/build/types";
-import { deployContract, createNFT } from "./utils";
+import { deployContract, createNFT, Utils, bulkTransfer } from "./utils";
 
 const initialBalance = BigInt(10000e6);
 //const masterBalance = BigInt(10000e6);
@@ -96,8 +96,8 @@ describe("Payment Test", function () {
         const createdAssetId = createNFT(runtime, appInfo.appID, user1);
         //OptIn Asset
         runtime.optInToASA(createdAssetId, user2.address, {});
-
-        //transfer nft to user2.
+        //Get Fee
+        const fee = runtime.getGlobalState(appInfo.appID, "fee") as bigint;
         const transferNftArgs = ["str:nft_transfer", algob.convert.addressToPk(user2.address)];
         const transferNFTTx: types.ExecParams[] = [
           {
@@ -113,7 +113,7 @@ describe("Payment Test", function () {
             sign: types.SignType.SecretKey,
             fromAccount: user1.account,
             toAccountAddr: appInfo.applicationAccount,
-            amountMicroAlgos: 75000,
+            amountMicroAlgos: fee,
             payFlags: { totalFee: 1000 },
           },
           {
@@ -349,7 +349,7 @@ describe("Payment Test", function () {
 
     describe("Fee management", () => {
       it("Should set fee function", async () => {
-        const appArgs = ["str:set fee", "str:7000"];
+        const appArgs = ["str:set fee", "int:7000"];
         const appCallParams: types.ExecParams = {
           type: types.TransactionType.CallApp,
           sign: types.SignType.SecretKey,
@@ -359,7 +359,8 @@ describe("Payment Test", function () {
           appArgs: appArgs,
         };
         runtime.executeTx([appCallParams]);
-        assert.equal(runtime.getGlobalState(appInfo.appID, "fee")?.toString(), "7000");
+        const fee = runtime.getGlobalState(appInfo.appID, "fee") as bigint;
+        assert.equal(fee, 7000n);
       });
       it("Should reject to set fee function by none app owner", async () => {
         const appArgs = ["str:set fee", "str:7000"];
@@ -371,7 +372,7 @@ describe("Payment Test", function () {
           payFlags: {},
           appArgs: appArgs,
         };
-        assert.throw(()=>runtime.executeTx([appCallParams]));
+        assert.throw(() => runtime.executeTx([appCallParams]));
       });
       it("Should reject to set fee function by invalid value", async () => {
         const appArgs = ["str:set fee", "str:test"];
@@ -383,7 +384,7 @@ describe("Payment Test", function () {
           payFlags: {},
           appArgs: appArgs,
         };
-        assert.throw(()=>runtime.executeTx([appCallParams]));
+        assert.throw(() => runtime.executeTx([appCallParams]));
       });
       it("Should reject to set fee function by zero fee", async () => {
         const appArgs = ["str:set fee", "str:0"];
@@ -395,7 +396,76 @@ describe("Payment Test", function () {
           payFlags: {},
           appArgs: appArgs,
         };
-        assert.throw(()=>runtime.executeTx([appCallParams]));
+        assert.throw(() => runtime.executeTx([appCallParams]));
+      });
+    });
+    describe("Withdraw management", () => {
+      it("Withdraw fee from app by owner", async () => {
+        //Bulk Transfer operation
+        bulkTransfer(runtime, appInfo.appID, appInfo.applicationAccount, user1, user2);
+        const originalBalance = runtime.getAccount(master.address).amount;
+        //Withdraw
+        const withdrawArgs = ["str:withdraw", "int:6000000"];
+        const withdrawTx: types.ExecParams[] = [
+          {
+            type: types.TransactionType.CallApp,
+            sign: types.SignType.SecretKey,
+            fromAccount: master.account,
+            appID: appInfo.appID,
+            payFlags: {},
+            appArgs: withdrawArgs,
+          },
+        ];
+        const txs: algob.runtime.rtypes.TxReceipt[] = runtime.executeTx(withdrawTx);
+        const tx = txs[0] as algob.runtime.rtypes.BaseTxReceipt;
+        const currentBalance = runtime.getAccount(master.address).amount;
+        assert.equal(currentBalance - originalBalance + BigInt(tx.txn.fee!!), 6000000n);
+      });
+      it("Should reject to set fee function by none app owner", async () => {
+        //Bulk Transfer operation
+        bulkTransfer(runtime, appInfo.appID, appInfo.applicationAccount, user1, user2);
+
+        //Withdraw
+        const appArgs = ["str:set fee", "str:7000"];
+        const appCallParams: types.ExecParams = {
+          type: types.TransactionType.CallApp,
+          sign: types.SignType.SecretKey,
+          fromAccount: user2.account,
+          appID: appInfo.appID,
+          payFlags: {},
+          appArgs: appArgs,
+        };
+        assert.throw(() => runtime.executeTx([appCallParams]));
+      });
+      it("Should reject to set fee function by invalid value", async () => {
+        //Bulk Transfer operation
+        bulkTransfer(runtime, appInfo.appID, appInfo.applicationAccount, user1, user2);
+
+        const appArgs = ["str:set fee", "str:test"];
+        const appCallParams: types.ExecParams = {
+          type: types.TransactionType.CallApp,
+          sign: types.SignType.SecretKey,
+          fromAccount: user2.account,
+          appID: appInfo.appID,
+          payFlags: {},
+          appArgs: appArgs,
+        };
+        assert.throw(() => runtime.executeTx([appCallParams]));
+      });
+      it("Should reject to set fee function by zero fee", async () => {
+        //Bulk Transfer operation
+        bulkTransfer(runtime, appInfo.appID, appInfo.applicationAccount, user1, user2);
+
+        const appArgs = ["str:set fee", "str:0"];
+        const appCallParams: types.ExecParams = {
+          type: types.TransactionType.CallApp,
+          sign: types.SignType.SecretKey,
+          fromAccount: user2.account,
+          appID: appInfo.appID,
+          payFlags: {},
+          appArgs: appArgs,
+        };
+        assert.throw(() => runtime.executeTx([appCallParams]));
       });
     });
   });
