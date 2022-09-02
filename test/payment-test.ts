@@ -1,124 +1,472 @@
 import { AccountStore, getProgram, Runtime } from "@algo-builder/runtime";
-import { types } from "@algo-builder/web";
+import { getSuggestedParams, tx, types } from "@algo-builder/web";
 import { LogicSigAccount } from "algosdk";
 import { assert, expect } from "chai";
 import * as algob from "@algo-builder/algob";
 import { readFileSync } from "fs";
 import { StorageConfig } from "@algo-builder/web/build/types";
+import { deployContract, createNFT, Utils, bulkTransfer } from "./utils";
 
-const minBalance = BigInt(1e6);
-const masterBalance = BigInt(10e6);
-const amount = BigInt(1e6);
+const initialBalance = BigInt(10000e6);
+//const masterBalance = BigInt(10000e6);
+const serviceFee = BigInt(1e6);
+const depositedBalance = BigInt(1000e6);
 
 describe("Payment Test", function () {
   let master: AccountStore;
+  let contractAdmin: AccountStore;
   let user1: AccountStore;
   let user2: AccountStore;
   let runtime: Runtime;
   let appInfo: algob.runtime.rtypes.AppInfo;
-  let ownifyAssetId: number;
-
-  const deploy = () => {
-    console.log("Deploy script execution started!");
-    const appStorageConfig: StorageConfig = {
-      localInts: 1,
-      localBytes: 1,
-      globalInts: 8,
-      globalBytes: 15,
-      appName: "payment",
-    };
-    const creationFlags = Object.assign({}, appStorageConfig);
-    const creationArgs = [algob.convert.addressToPk(master.address)];
-
-    const placeholderParam: algob.types.SCParams = {
-      TMPL_NOMINAL_PRICE: 1000n,
-      TMPL_MATURITY_DATE: BigInt(Math.round(new Date().getTime() / 1000) + 240),
-    };
-
-    appInfo = runtime.deployApp(
-      master.account,
-      {
-        ...creationFlags,
-        appName: "payment",
-        metaType: types.MetaType.FILE,
-        approvalProgramFilename: "payment - approval.teal",
-        clearProgramFilename: "payment - clear.teal",
-        appArgs: creationArgs,
-      },
-      {},
-      placeholderParam
-    );
-
-    ownifyAssetId = runtime.deployASA("ownify", {
-      creator: { ...user1.account, name: "ownify-token-creator" },
-    }).assetIndex;
-  };
 
   beforeEach(async function () {
-    master = new AccountStore(masterBalance);
-    user1 = new AccountStore(minBalance);
-    user2 = new AccountStore(masterBalance);
+    master = new AccountStore(initialBalance);
+    contractAdmin = new AccountStore(0);
+    user1 = new AccountStore(initialBalance);
+    user2 = new AccountStore(initialBalance);
     runtime = new Runtime([master, user1, user2]);
-    deploy();
+    appInfo = deployContract(runtime, "payment", master);
   });
 
-  it("Should set admin function", async () => {
-    const appArgs = ["str:set admin", algob.convert.addressToPk(user1.address)]; // converts algorand address to Uint8Array
-    const appCallParams: types.ExecParams = {
-      type: types.TransactionType.CallApp,
-      sign: types.SignType.SecretKey,
-      fromAccount: master.account,
-      appID: appInfo.appID,
-      payFlags: {},
-      appArgs: appArgs,
-    };
-    runtime.executeTx([appCallParams]);
-    assert.deepEqual(runtime.getGlobalState(appInfo.appID, "admin"), algob.convert.addressToPk(user1.address));
+  describe("Asset management", () => {
+    describe("create nft", () => {
+      it("Should create nft", () => {
+        const appArgs = ["str:nft_create"];
+        const createNFTTx: types.ExecParams[] = [
+          {
+            type: types.TransactionType.CallApp,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            appID: appInfo.appID,
+            payFlags: {},
+            appArgs: appArgs,
+          },
+          {
+            type: types.TransactionType.DeployASA,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            asaName: "ownify",
+            payFlags: { totalFee: 1000 },
+          },
+        ];
+        const txs = runtime.executeTx(createNFTTx);
+        assert.isDefined((txs[1] as algob.runtime.rtypes.ASAInfo).assetIndex);
+      });
+      it("Should reject to create nft with invalid tx structure (Tx type)", () => {
+        const appArgs = ["str:nft_create", algob.convert.addressToPk(user1.address)];
+        const createNFTTx: types.ExecParams[] = [
+          {
+            type: types.TransactionType.CallApp,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            appID: appInfo.appID,
+            payFlags: {},
+            appArgs: appArgs,
+          },
+          {
+            type: types.TransactionType.TransferAlgo,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            toAccountAddr: appInfo.applicationAccount,
+            amountMicroAlgos: 2000,
+            payFlags: { totalFee: 1000 },
+          },
+        ];
+        assert.throw(() => runtime.executeTx(createNFTTx));
+      });
+      it("Should reject to create nft with invalid tx structure (Tx length)", () => {
+        const appArgs = ["str:nft_create", algob.convert.addressToPk(user1.address)];
+        const createNFTTx: types.ExecParams[] = [
+          {
+            type: types.TransactionType.CallApp,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            appID: appInfo.appID,
+            payFlags: {},
+            appArgs: appArgs,
+          },
+        ];
+        assert.throw(() => runtime.executeTx(createNFTTx));
+      });
+    });
+
+    describe("transfer nft", () => {
+      it("Should transfer nft", () => {
+        const createdAssetId = createNFT(runtime, appInfo.appID, user1);
+        //OptIn Asset
+        runtime.optInToASA(createdAssetId, user2.address, {});
+        //Get Fee
+        const fee = runtime.getGlobalState(appInfo.appID, "fee") as bigint;
+        const transferNftArgs = ["str:nft_transfer", algob.convert.addressToPk(user2.address)];
+        const transferNFTTx: types.ExecParams[] = [
+          {
+            type: types.TransactionType.CallApp,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            appID: appInfo.appID,
+            payFlags: {},
+            appArgs: transferNftArgs,
+          },
+          {
+            type: types.TransactionType.TransferAlgo,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            toAccountAddr: appInfo.applicationAccount,
+            amountMicroAlgos: fee,
+            payFlags: { totalFee: 1000 },
+          },
+          {
+            type: types.TransactionType.TransferAsset,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            toAccountAddr: user2.address,
+            amount: 1n,
+            assetID: createdAssetId,
+            payFlags: { totalFee: 1000 },
+          },
+        ];
+        runtime.executeTx(transferNFTTx);
+      });
+      it("Should reject to transfer nft with invalid tx structure (Tx type)", () => {
+        const createdAssetId = createNFT(runtime, appInfo.appID, user1);
+        //OptIn Asset
+        runtime.optInToASA(createdAssetId, user2.address, {});
+        //transfer nft to user2.
+        const transferNftArgs = ["str:nft_transfer", algob.convert.addressToPk(user2.address)];
+        const transferNFTTx: types.ExecParams[] = [
+          {
+            type: types.TransactionType.CallApp,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            appID: appInfo.appID,
+            payFlags: {},
+            appArgs: transferNftArgs,
+          },
+          {
+            type: types.TransactionType.TransferAsset,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            toAccountAddr: user2.address,
+            amount: 2n,
+            assetID: createdAssetId,
+            payFlags: { totalFee: 1000 },
+          },
+          {
+            type: types.TransactionType.TransferAsset,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            toAccountAddr: user2.address,
+            amount: 1n,
+            assetID: createdAssetId,
+            payFlags: { totalFee: 1000 },
+          },
+        ];
+        assert.throw(() => runtime.executeTx(transferNFTTx));
+      });
+      it("Should reject to transfer nft with invalid tx structure (Tx length)", () => {
+        const createdAssetId = createNFT(runtime, appInfo.appID, user1);
+        //OptIn Asset
+        runtime.optInToASA(createdAssetId, user2.address, {});
+        //transfer nft to user2.
+        const transferNftArgs = ["str:nft_transfer", algob.convert.addressToPk(user2.address)];
+        const transferNFTTx: types.ExecParams[] = [
+          {
+            type: types.TransactionType.CallApp,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            appID: appInfo.appID,
+            payFlags: {},
+            appArgs: transferNftArgs,
+          },
+          {
+            type: types.TransactionType.TransferAsset,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            toAccountAddr: user2.address,
+            amount: 1n,
+            assetID: createdAssetId,
+            payFlags: { totalFee: 1000 },
+          },
+        ];
+        assert.throw(() => runtime.executeTx(transferNFTTx));
+      });
+      it("Should reject to transfer nft with invalid fee", () => {
+        const createdAssetId = createNFT(runtime, appInfo.appID, user1);
+        //OptIn Asset
+        runtime.optInToASA(createdAssetId, user2.address, {});
+
+        //transfer nft to user2.
+        const transferNftArgs = ["str:nft_transfer", algob.convert.addressToPk(user2.address)];
+        const transferNFTTx: types.ExecParams[] = [
+          {
+            type: types.TransactionType.CallApp,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            appID: appInfo.appID,
+            payFlags: {},
+            appArgs: transferNftArgs,
+          },
+          {
+            type: types.TransactionType.TransferAlgo,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            toAccountAddr: appInfo.applicationAccount,
+            amountMicroAlgos: 70000,
+            payFlags: { totalFee: 1000 },
+          },
+          {
+            type: types.TransactionType.TransferAsset,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            toAccountAddr: user2.address,
+            amount: 1n,
+            assetID: createdAssetId,
+            payFlags: { totalFee: 1000 },
+          },
+        ];
+        assert.throw(() => runtime.executeTx(transferNFTTx));
+      });
+      it("Should reject to transfer nft with invalid fee collector", () => {
+        const createdAssetId = createNFT(runtime, appInfo.appID, user1);
+        //OptIn Asset
+        runtime.optInToASA(createdAssetId, user2.address, {});
+
+        //transfer nft to user2.
+        const transferNftArgs = ["str:nft_transfer", algob.convert.addressToPk(user2.address)];
+        const transferNFTTx: types.ExecParams[] = [
+          {
+            type: types.TransactionType.CallApp,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            appID: appInfo.appID,
+            payFlags: {
+              rekeyTo: user2.address,
+            },
+            appArgs: transferNftArgs,
+          },
+          {
+            type: types.TransactionType.TransferAlgo,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            toAccountAddr: user2.address,
+            amountMicroAlgos: 75000,
+            payFlags: { totalFee: 1000 },
+          },
+          {
+            type: types.TransactionType.TransferAsset,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            toAccountAddr: user2.address,
+            amount: 1n,
+            assetID: createdAssetId,
+            payFlags: { totalFee: 1000 },
+          },
+        ];
+        assert.throw(() => runtime.executeTx(transferNFTTx));
+      });
+      it("Should reject to transfer nft with rekey", () => {
+        const createdAssetId = createNFT(runtime, appInfo.appID, user1);
+        //OptIn Asset
+        runtime.optInToASA(createdAssetId, user2.address, {});
+
+        //transfer nft to user2.
+        const transferNftArgs = ["str:nft_transfer", algob.convert.addressToPk(user2.address)];
+        const transferNFTTx: types.ExecParams[] = [
+          {
+            type: types.TransactionType.CallApp,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            appID: appInfo.appID,
+            payFlags: {
+              rekeyTo: user2.address,
+            },
+            appArgs: transferNftArgs,
+          },
+          {
+            type: types.TransactionType.TransferAlgo,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            toAccountAddr: appInfo.applicationAccount,
+            amountMicroAlgos: 70000,
+            payFlags: { totalFee: 1000 },
+          },
+          {
+            type: types.TransactionType.TransferAsset,
+            sign: types.SignType.SecretKey,
+            fromAccount: user1.account,
+            toAccountAddr: user2.address,
+            amount: 1n,
+            assetID: createdAssetId,
+            payFlags: { totalFee: 1000 },
+          },
+        ];
+        assert.throw(() => runtime.executeTx(transferNFTTx));
+      });
+    });
   });
 
-  it("Should reject set admin by none creator", async () => {
-    const appArgs = ["str:set admin", algob.convert.addressToPk(user1.address)]; // converts algorand address to Uint8Array
-    const appCallParams: types.ExecParams = {
-      type: types.TransactionType.CallApp,
-      sign: types.SignType.SecretKey,
-      fromAccount: user1.account,
-      appID: appInfo.appID,
-      payFlags: {},
-      appArgs: appArgs,
-    };
-    assert.throw(() => runtime.executeTx([appCallParams]));
-  });
+  describe("App Owner", () => {
+    describe("Admin Management", () => {
+      it("Should set admin", async () => {
+        const appArgs = ["str:set admin", algob.convert.addressToPk(user2.address)]; // converts algorand address to Uint8Array
+        const appCallParams: types.ExecParams = {
+          type: types.TransactionType.CallApp,
+          sign: types.SignType.SecretKey,
+          fromAccount: master.account,
+          appID: appInfo.appID,
+          payFlags: {},
+          appArgs: appArgs,
+        };
+        runtime.executeTx([appCallParams]);
+        assert.deepEqual(runtime.getGlobalState(appInfo.appID, "admin"), algob.convert.addressToPk(user2.address));
+      });
+      it("Should reject to set admin by none app owner", async () => {
+        const appArgs = ["str:set admin", algob.convert.addressToPk(user2.address)]; // converts algorand address to Uint8Array
+        const appCallParams: types.ExecParams = {
+          type: types.TransactionType.CallApp,
+          sign: types.SignType.SecretKey,
+          fromAccount: user2.account,
+          appID: appInfo.appID,
+          payFlags: {},
+          appArgs: appArgs,
+        };
+        assert.throw(() => runtime.executeTx([appCallParams]));
+      });
+      it("Should reject to set invalid address", async () => {
+        const appArgs = ["str:set admin", "str:test"]; // converts algorand address to Uint8Array
+        const appCallParams: types.ExecParams = {
+          type: types.TransactionType.CallApp,
+          sign: types.SignType.SecretKey,
+          fromAccount: user2.account,
+          appID: appInfo.appID,
+          payFlags: {},
+          appArgs: appArgs,
+        };
+        assert.throw(() => runtime.executeTx([appCallParams]));
+      });
+    });
 
-  it.only("Should deposit fee to escrow", () => {
-    //check master account holding ownify asset
-    assert.equal(runtime.getAssetHolding(ownifyAssetId, user1.address).amount, 1n);
-    //optIn receiver account to transfer
-    runtime.optInToASA(ownifyAssetId, user2.address, {});
+    describe("Fee management", () => {
+      it("Should set fee function", async () => {
+        const appArgs = ["str:set fee", "int:7000"];
+        const appCallParams: types.ExecParams = {
+          type: types.TransactionType.CallApp,
+          sign: types.SignType.SecretKey,
+          fromAccount: master.account,
+          appID: appInfo.appID,
+          payFlags: {},
+          appArgs: appArgs,
+        };
+        runtime.executeTx([appCallParams]);
+        const fee = runtime.getGlobalState(appInfo.appID, "fee") as bigint;
+        assert.equal(fee, 7000n);
+      });
+      it("Should reject to set fee function by none app owner", async () => {
+        const appArgs = ["str:set fee", "str:7000"];
+        const appCallParams: types.ExecParams = {
+          type: types.TransactionType.CallApp,
+          sign: types.SignType.SecretKey,
+          fromAccount: user2.account,
+          appID: appInfo.appID,
+          payFlags: {},
+          appArgs: appArgs,
+        };
+        assert.throw(() => runtime.executeTx([appCallParams]));
+      });
+      it("Should reject to set fee function by invalid value", async () => {
+        const appArgs = ["str:set fee", "str:test"];
+        const appCallParams: types.ExecParams = {
+          type: types.TransactionType.CallApp,
+          sign: types.SignType.SecretKey,
+          fromAccount: user2.account,
+          appID: appInfo.appID,
+          payFlags: {},
+          appArgs: appArgs,
+        };
+        assert.throw(() => runtime.executeTx([appCallParams]));
+      });
+      it("Should reject to set fee function by zero fee", async () => {
+        const appArgs = ["str:set fee", "str:0"];
+        const appCallParams: types.ExecParams = {
+          type: types.TransactionType.CallApp,
+          sign: types.SignType.SecretKey,
+          fromAccount: user2.account,
+          appID: appInfo.appID,
+          payFlags: {},
+          appArgs: appArgs,
+        };
+        assert.throw(() => runtime.executeTx([appCallParams]));
+      });
+    });
+    describe("Withdraw management", () => {
+      it("Withdraw fee from app by owner", async () => {
+        //Bulk Transfer operation
+        bulkTransfer(runtime, appInfo.appID, appInfo.applicationAccount, user1, user2);
+        const originalBalance = runtime.getAccount(master.address).amount;
+        //Withdraw
+        const withdrawArgs = ["str:withdraw", "int:6000000"];
+        const withdrawTx: types.ExecParams[] = [
+          {
+            type: types.TransactionType.CallApp,
+            sign: types.SignType.SecretKey,
+            fromAccount: master.account,
+            appID: appInfo.appID,
+            payFlags: {},
+            appArgs: withdrawArgs,
+          },
+        ];
+        const txs: algob.runtime.rtypes.TxReceipt[] = runtime.executeTx(withdrawTx);
+        const tx = txs[0] as algob.runtime.rtypes.BaseTxReceipt;
+        const currentBalance = runtime.getAccount(master.address).amount;
+        assert.equal(currentBalance - originalBalance + BigInt(tx.txn.fee!!), 6000000n);
+      });
+      it("Should reject to set fee function by none app owner", async () => {
+        //Bulk Transfer operation
+        bulkTransfer(runtime, appInfo.appID, appInfo.applicationAccount, user1, user2);
 
-    const sendAssetTx: types.ExecParams[] = [
-      {
-        type: types.TransactionType.TransferAlgo,
-        sign: types.SignType.SecretKey,
-        fromAccount: user1.account,
-        toAccountAddr: appInfo.applicationAccount,
-        amountMicroAlgos: 2000,
-        payFlags: { totalFee: 1000 },
-      },
-      {
-        type: types.TransactionType.TransferAsset,
-        sign: types.SignType.SecretKey,
-        fromAccount: user1.account,
-        toAccountAddr: user2.address,
-        amount: 1,
-        assetID: ownifyAssetId,
-        payFlags: { totalFee: 1000 },
-      },
-    ];
-    runtime.executeTx(sendAssetTx);
-    const appAccount = runtime.getAccount(appInfo.applicationAccount);
-    assert.equal(appAccount.balance(), 2000n);
+        //Withdraw
+        const appArgs = ["str:set fee", "str:7000"];
+        const appCallParams: types.ExecParams = {
+          type: types.TransactionType.CallApp,
+          sign: types.SignType.SecretKey,
+          fromAccount: user2.account,
+          appID: appInfo.appID,
+          payFlags: {},
+          appArgs: appArgs,
+        };
+        assert.throw(() => runtime.executeTx([appCallParams]));
+      });
+      it("Should reject to set fee function by invalid value", async () => {
+        //Bulk Transfer operation
+        bulkTransfer(runtime, appInfo.appID, appInfo.applicationAccount, user1, user2);
 
-    const holdingAsset = runtime.getAssetHolding(ownifyAssetId, user2.address);
-    assert.equal(holdingAsset.amount, 1n);
+        const appArgs = ["str:set fee", "str:test"];
+        const appCallParams: types.ExecParams = {
+          type: types.TransactionType.CallApp,
+          sign: types.SignType.SecretKey,
+          fromAccount: user2.account,
+          appID: appInfo.appID,
+          payFlags: {},
+          appArgs: appArgs,
+        };
+        assert.throw(() => runtime.executeTx([appCallParams]));
+      });
+      it("Should reject to set fee function by zero fee", async () => {
+        //Bulk Transfer operation
+        bulkTransfer(runtime, appInfo.appID, appInfo.applicationAccount, user1, user2);
+
+        const appArgs = ["str:set fee", "str:0"];
+        const appCallParams: types.ExecParams = {
+          type: types.TransactionType.CallApp,
+          sign: types.SignType.SecretKey,
+          fromAccount: user2.account,
+          appID: appInfo.appID,
+          payFlags: {},
+          appArgs: appArgs,
+        };
+        assert.throw(() => runtime.executeTx([appCallParams]));
+      });
+    });
   });
 });
